@@ -1,17 +1,48 @@
 const Book = require("../model/bookModel");
+const { cloudinary } = require("../config/cloudinaryConfig");
 
 // Create a new book
 exports.createBook = async (req, res) => {
     try {
-        const book = new Book(req.body);
-        await book.save();
+        if (!req.file) {
+            return res.status(400).json({
+                status: "error",
+                message: "Image file is required"
+            });
+        }
+
+        // Upload image to Cloudinary using buffer
+        const cloudinaryResult = await new Promise((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                { folder: "book_images", resource_type: "image" },
+                (error, result) => {
+                    if (error) reject(error);
+                    else resolve(result);
+                }
+            );
+            uploadStream.end(req.file.buffer);
+        });
+
+        // Create new book entry
+        const newBook = new Book({
+            title: req.body.title,
+            author: req.body.author,
+            genre: req.body.genre,
+            publicationDate: req.body.publicationDate,
+            description: req.body.description,
+            image: cloudinaryResult.secure_url, // Save Cloudinary image URL
+        });
+
+        await newBook.save();
+
         res.status(201).json({
             status: "success",
             message: "Book created successfully",
-            data: book
+            data: newBook
         });
+
     } catch (error) {
-        res.status(400).json({
+        res.status(500).json({
             status: "error",
             message: "Failed to create book",
             error: error.message
@@ -64,18 +95,47 @@ exports.getBookById = async (req, res) => {
 // Update a book by ID
 exports.updateBook = async (req, res) => {
     try {
-        const book = await Book.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+        const book = await Book.findById(req.params.id);
         if (!book) {
             return res.status(404).json({
                 status: "error",
                 message: "Book not found"
             });
         }
+
+        let imageUrl = book.image;
+        if (req.file) {
+            // Upload new image to Cloudinary
+            const cloudinaryResult = await new Promise((resolve, reject) => {
+                const uploadStream = cloudinary.uploader.upload_stream(
+                    { folder: "book_images", resource_type: "image" },
+                    (error, result) => {
+                        if (error) reject(error);
+                        else resolve(result);
+                    }
+                );
+                uploadStream.end(req.file.buffer);
+            });
+
+            imageUrl = cloudinaryResult.secure_url;
+        }
+
+        // Update book details
+        book.title = req.body.title || book.title;
+        book.author = req.body.author || book.author;
+        book.genre = req.body.genre || book.genre;
+        book.publicationDate = req.body.publicationDate || book.publicationDate;
+        book.description = req.body.description || book.description;
+        book.image = imageUrl;
+
+        await book.save();
+
         res.status(200).json({
             status: "success",
             message: "Book updated successfully",
             data: book
         });
+
     } catch (error) {
         res.status(500).json({
             status: "error",
